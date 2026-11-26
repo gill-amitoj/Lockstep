@@ -1,5 +1,7 @@
 rootProject.name = 'lockstep'
 
 // Each service is its own Spring Boot app with its own build file.
-// fraud-service is added in Phase 5.
+// e2e-tests runs both services as Docker containers and tests them together.
 include 'ledger-service'
+include 'fraud-service'
+include 'e2e-tests'

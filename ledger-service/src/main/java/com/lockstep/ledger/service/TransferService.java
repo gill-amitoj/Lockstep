@@ -3,6 +3,7 @@ package com.lockstep.ledger.service;
 import com.lockstep.ledger.domain.Account;
 import com.lockstep.ledger.domain.Entry;
 import com.lockstep.ledger.domain.Transfer;
+import com.lockstep.ledger.outbox.OutboxService;
 import com.lockstep.ledger.repository.AccountRepository;
 import com.lockstep.ledger.repository.EntryRepository;
 import com.lockstep.ledger.repository.TransferRepository;
@@ -23,20 +24,23 @@ public class TransferService {
     private final TransferRepository transfers;
     private final EntryRepository entries;
     private final AuditService audit;
+    private final OutboxService outbox;
 
     public TransferService(AccountRepository accounts, TransferRepository transfers,
-                           EntryRepository entries, AuditService audit) {
+                           EntryRepository entries, AuditService audit, OutboxService outbox) {
         this.accounts = accounts;
         this.transfers = transfers;
         this.entries = entries;
         this.audit = audit;
+        this.outbox = outbox;
     }
 
     /**
      * Moves money between two accounts. Everything inside runs in ONE database
-     * transaction: the transfer row, both entries, both balance updates and the
-     * audit record are committed together or not at all. If any check fails, the
-     * exception makes Spring roll back, so a failed transfer leaves no trace.
+     * transaction: the transfer row, both entries, both balance updates, the
+     * audit record and the outbox event are committed together or not at all.
+     * If any check fails, the exception makes Spring roll back, so a failed
+     * transfer leaves no trace.
      *
      * Concurrency: both account rows are locked (SELECT ... FOR UPDATE) before
      * the balance is checked, and the locks are held until commit. Without the
@@ -105,6 +109,9 @@ public class TransferService {
                 "fromAccountId", fromAccountId,
                 "toAccountId", toAccountId,
                 "amountCents", amountCents));
+        // 7. Announce it to other services via the outbox: same transaction, so the
+        //    event exists if and only if the transfer does (see V6__outbox.sql).
+        outbox.recordTransferCompleted(transfer, from);
         log.atInfo().addKeyValue("transferId", transfer.getId()).addKeyValue("fromAccountId", fromAccountId)
                 .addKeyValue("toAccountId", toAccountId).addKeyValue("amountCents", amountCents)
                 .log("Transfer created");

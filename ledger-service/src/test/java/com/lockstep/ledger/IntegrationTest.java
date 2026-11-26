@@ -29,8 +29,14 @@ import java.util.UUID;
         // Test-only signing key. It protects nothing real: it only exists inside
         // throwaway test containers. Production reads JWT_SECRET from the environment.
         "lockstep.jwt.secret=test-only-secret-do-not-use-anywhere-else-0123456789",
-        // Tests trigger reconciliation themselves, at known moments.
-        "lockstep.reconciliation.scheduled=false"
+        // Tests trigger reconciliation and the outbox relay themselves, at known moments.
+        "lockstep.reconciliation.scheduled=false",
+        "lockstep.outbox.relay.scheduled=false",
+        // Fail fast when OutboxTest pauses the Kafka container, instead of waiting 10s.
+        "lockstep.outbox.send-timeout-ms=3000",
+        "spring.kafka.producer.properties.request.timeout.ms=1500",
+        "spring.kafka.producer.properties.delivery.timeout.ms=2000",
+        "spring.kafka.producer.properties.max.block.ms=2000"
 })
 @AutoConfigureMockMvc
 @Import(TestcontainersConfiguration.class)
