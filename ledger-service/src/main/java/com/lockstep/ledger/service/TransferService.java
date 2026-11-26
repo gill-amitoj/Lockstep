@@ -28,9 +28,10 @@ public class TransferService {
      * committed together or not at all. If any check fails, the exception makes
      * Spring roll back, so a failed transfer leaves no trace.
      *
-     * KNOWN GAP (fixed in Phase 3): the accounts are read without a row lock.
-     * Two concurrent transfers from the same account can both read the old
-     * balance and one update overwrites the other (a "lost update").
+     * Concurrency: both account rows are locked (SELECT ... FOR UPDATE) before
+     * the balance is checked, and the locks are held until commit. Without the
+     * lock, two transfers could both read the same old balance and one write
+     * would overwrite the other (a "lost update"). See ConcurrentTransferTest.
      */
     @Transactional
     public Transfer transfer(Long fromAccountId, Long toAccountId, Long amountCents) {
@@ -45,11 +46,19 @@ public class TransferService {
             throw new InvalidRequestException("Cannot transfer to the same account");
         }
 
-        // 2. Load both accounts (404 if either is missing).
-        Account from = findAccount(fromAccountId);
-        Account to = findAccount(toAccountId);
+        // 2. Lock both account rows, ALWAYS the lower id first (404 if either is missing).
+        //    If we locked `from` first instead, A->B and B->A running together could
+        //    each hold one row and wait forever for the other: a deadlock. With one
+        //    global order, both lock the lower id first, so one simply waits its turn.
+        Long firstId = Math.min(fromAccountId, toAccountId);
+        Long secondId = Math.max(fromAccountId, toAccountId);
+        Account first = lockAccount(firstId);
+        Account second = lockAccount(secondId);
+        Account from = first.getId().equals(fromAccountId) ? first : second;
+        Account to = (from == first) ? second : first;
 
-        // 3. Business rule: customers cannot overdraw.
+        // 3. Business rule: customers cannot overdraw. Safe to check now: we hold
+        //    the lock, so this balance cannot change until we commit.
         if (!from.canDebit(amountCents)) {
             throw new InsufficientFundsException(fromAccountId);
         }
@@ -74,8 +83,8 @@ public class TransferService {
                 .orElseThrow(() -> new NotFoundException("Transfer " + transferId + " not found"));
     }
 
-    private Account findAccount(Long accountId) {
-        return accounts.findById(accountId)
+    private Account lockAccount(Long accountId) {
+        return accounts.findByIdForUpdate(accountId)
                 .orElseThrow(() -> new NotFoundException("Account " + accountId + " not found"));
     }
 }
