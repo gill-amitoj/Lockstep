@@ -2,6 +2,7 @@ package com.lockstep.fraud.web;
 
 import com.lockstep.fraud.domain.FraudFlag;
 import com.lockstep.fraud.repository.FraudFlagRepository;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -13,6 +14,7 @@ import java.time.Instant;
 import java.util.List;
 
 /** ADMIN only (SecurityConfig). Newest flags first, optionally for one account. */
+@Tag(name = "Fraud flags", description = "ADMIN role only")
 @RestController
 @RequestMapping("/flags")
 public class FlagController {

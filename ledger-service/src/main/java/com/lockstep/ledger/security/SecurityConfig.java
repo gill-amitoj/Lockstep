@@ -48,6 +48,8 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.POST, "/auth/register", "/auth/token").permitAll()
                         // Spring forwards errors to /error internally; let that render the problem response.
                         .requestMatchers("/error").permitAll()
+                        // API documentation is public: it describes the API, it grants no access to data.
+                        .requestMatchers("/v3/api-docs/**", "/swagger-ui/**", "/swagger-ui.html").permitAll()
                         .requestMatchers("/admin/**").hasRole(Role.ADMIN.name())
                         .requestMatchers(HttpMethod.POST, "/accounts").hasRole(Role.CUSTOMER.name())
                         .anyRequest().authenticated())
