@@ -1,5 +1,6 @@
 package com.settle.ledger.web;
 
+import com.settle.ledger.service.IdempotencyKeyReusedException;
 import com.settle.ledger.service.InsufficientFundsException;
 import com.settle.ledger.service.InvalidRequestException;
 import com.settle.ledger.service.NotFoundException;
@@ -34,6 +35,12 @@ public class ApiExceptionHandler {
     @ExceptionHandler(InsufficientFundsException.class)
     ProblemDetail handleInsufficientFunds(InsufficientFundsException e) {
         return problem(HttpStatus.UNPROCESSABLE_CONTENT, "insufficient-funds", "Insufficient funds", e.getMessage());
+    }
+
+    @ExceptionHandler(IdempotencyKeyReusedException.class)
+    ProblemDetail handleIdempotencyKeyReused(IdempotencyKeyReusedException e) {
+        return problem(HttpStatus.UNPROCESSABLE_CONTENT, "idempotency-key-reused",
+                "Idempotency key reused", e.getMessage());
     }
 
     private static ProblemDetail problem(HttpStatus status, String type, String title, String detail) {

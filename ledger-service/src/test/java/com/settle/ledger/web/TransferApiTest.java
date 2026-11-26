@@ -7,6 +7,9 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
+
+import java.util.UUID;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -42,7 +45,7 @@ class TransferApiTest extends IntegrationTest {
         Account alice = openFundedAccount(10_000);
         Account bob = openFundedAccount(0);
 
-        mockMvc.perform(post("/transfers")
+        mockMvc.perform(postTransfer()
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(transferJson(alice.getId(), bob.getId(), 2_500)))
                 .andExpect(status().isCreated())
@@ -67,7 +70,7 @@ class TransferApiTest extends IntegrationTest {
         Account alice = openFundedAccount(100);
         Account bob = openFundedAccount(0);
 
-        mockMvc.perform(post("/transfers")
+        mockMvc.perform(postTransfer()
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(transferJson(alice.getId(), bob.getId(), 101)))
                 .andExpect(status().isUnprocessableContent())
@@ -80,7 +83,7 @@ class TransferApiTest extends IntegrationTest {
     void sameAccountReturns400ProblemJson() throws Exception {
         Account alice = openFundedAccount(100);
 
-        mockMvc.perform(post("/transfers")
+        mockMvc.perform(postTransfer()
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(transferJson(alice.getId(), alice.getId(), 10)))
                 .andExpect(status().isBadRequest())
@@ -93,7 +96,7 @@ class TransferApiTest extends IntegrationTest {
         Account alice = openFundedAccount(100);
         Account bob = openFundedAccount(0);
 
-        mockMvc.perform(post("/transfers")
+        mockMvc.perform(postTransfer()
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(transferJson(alice.getId(), bob.getId(), 0)))
                 .andExpect(status().isBadRequest());
@@ -108,7 +111,7 @@ class TransferApiTest extends IntegrationTest {
 
     @Test
     void malformedJsonReturns400ProblemJson() throws Exception {
-        mockMvc.perform(post("/transfers")
+        mockMvc.perform(postTransfer()
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{not json"))
                 .andExpect(status().isBadRequest())
@@ -121,7 +124,7 @@ class TransferApiTest extends IntegrationTest {
         Account alice = openFundedAccount(100);
         Account bob = openFundedAccount(0);
 
-        mockMvc.perform(post("/transfers")
+        mockMvc.perform(postTransfer()
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {"fromAccountId": %d, "toAccountId": %d, "amountCents": 10.99}
@@ -139,7 +142,7 @@ class TransferApiTest extends IntegrationTest {
         Account alice = openFundedAccount(100);
         Account bob = openFundedAccount(0);
 
-        String created = mockMvc.perform(post("/transfers")
+        String created = mockMvc.perform(postTransfer()
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(transferJson(alice.getId(), bob.getId(), 10)))
                 .andExpect(status().isCreated())
@@ -150,6 +153,11 @@ class TransferApiTest extends IntegrationTest {
         mockMvc.perform(get("/transfers/{id}", id.longValue()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.createdAt").value(createdAt));
+    }
+
+    /** POST /transfers with a fresh Idempotency-Key, so each call is a new request. */
+    private static MockHttpServletRequestBuilder postTransfer() {
+        return post("/transfers").header("Idempotency-Key", UUID.randomUUID().toString());
     }
 
     private static String transferJson(long from, long to, long amountCents) {
