@@ -3,6 +3,7 @@ package com.lockstep.ledger.service;
 import com.lockstep.ledger.IntegrationTest;
 import com.lockstep.ledger.domain.Account;
 import com.lockstep.ledger.repository.EntryRepository;
+import com.lockstep.ledger.security.Caller;
 import com.lockstep.ledger.web.dto.TransferRequest;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -101,8 +102,8 @@ class ConcurrentTransferTest extends IntegrationTest {
 
         assertThat(outcomes).containsOnly(Outcome.SUCCEEDED).hasSize(200);
         // 100 each way of the same amount: both end where they started.
-        assertThat(accountService.getAccount(a.getId()).getBalanceCents()).isEqualTo(100_000);
-        assertThat(accountService.getAccount(b.getId()).getBalanceCents()).isEqualTo(100_000);
+        assertThat(balanceOf(a.getId())).isEqualTo(100_000);
+        assertThat(balanceOf(b.getId())).isEqualTo(100_000);
         assertLedgerConsistent(List.of(a.getId(), b.getId()), 200_000, 200);
     }
 
@@ -128,7 +129,7 @@ class ConcurrentTransferTest extends IntegrationTest {
         List<Outcome> outcomes = runConcurrently(requests);
 
         assertThat(outcomes).containsOnly(Outcome.SUCCEEDED).hasSize(200);
-        assertThat(accountService.getAccount(hot.getId()).getBalanceCents()).isEqualTo(100_000 - 200 * 10);
+        assertThat(balanceOf(hot.getId())).isEqualTo(100_000 - 200 * 10);
         List<Long> all = new ArrayList<>(receivers);
         all.add(hot.getId());
         assertLedgerConsistent(all, 100_000, 200);
@@ -146,10 +147,13 @@ class ConcurrentTransferTest extends IntegrationTest {
         try {
             List<Future<Outcome>> futures = new ArrayList<>();
             for (TransferRequest request : requests) {
+                // Each transfer is sent by the customer who owns the "from" account,
+                // so the ownership check runs under load too.
+                Caller sender = ownerOf(accountService.getAccount(ADMIN, request.fromAccountId()));
                 Callable<Outcome> task = () -> {
                     startGate.await();
                     try {
-                        idempotentTransferService.transfer(UUID.randomUUID().toString(), request);
+                        idempotentTransferService.transfer(sender, UUID.randomUUID().toString(), request);
                         return Outcome.SUCCEEDED;
                     } catch (InsufficientFundsException e) {
                         return Outcome.INSUFFICIENT_FUNDS;
@@ -172,7 +176,7 @@ class ConcurrentTransferTest extends IntegrationTest {
     private void assertLedgerConsistent(List<Long> accountIds, long expectedTotal, long expectedTransfers) {
         long total = 0;
         for (Long id : accountIds) {
-            long balance = accountService.getAccount(id).getBalanceCents();
+            long balance = balanceOf(id);
             assertThat(balance).as("balance of account %d", id).isNotNegative();
             // No lost updates: the stored running balance matches the entries exactly.
             assertThat(balance).as("balance vs entries of account %d", id)

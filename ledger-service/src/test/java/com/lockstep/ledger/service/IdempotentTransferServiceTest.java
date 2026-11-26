@@ -40,13 +40,13 @@ class IdempotentTransferServiceTest extends IntegrationTest {
         String key = newKey();
         TransferRequest request = new TransferRequest(alice.getId(), bob.getId(), 1_000L);
 
-        StoredResponse response = idempotentTransferService.transfer(key, request);
+        StoredResponse response = idempotentTransferService.transfer(ownerOf(alice), key, request);
 
         assertThat(response.status()).isEqualTo(201);
         assertThat(response.replayed()).isFalse();
         assertThat(response.body()).contains("\"amountCents\":1000");
 
-        IdempotencyKey stored = keyRepository.findById(key).orElseThrow();
+        IdempotencyKey stored = keyRepository.findById(new IdempotencyKey.Id(alice.getOwnerId(), key)).orElseThrow();
         assertThat(stored.getRequestHash()).isEqualTo(IdempotentTransferService.hash(request)).hasSize(64);
         assertThat(stored.getResponseStatus()).isEqualTo(201);
         assertThat(stored.getResponseBody()).isEqualTo(response.body());
@@ -60,17 +60,17 @@ class IdempotentTransferServiceTest extends IntegrationTest {
         String key = newKey();
         TransferRequest request = new TransferRequest(alice.getId(), bob.getId(), 1_000L);
 
-        StoredResponse first = idempotentTransferService.transfer(key, request);
-        StoredResponse retry = idempotentTransferService.transfer(key, request);
+        StoredResponse first = idempotentTransferService.transfer(ownerOf(alice), key, request);
+        StoredResponse retry = idempotentTransferService.transfer(ownerOf(alice), key, request);
 
         assertThat(retry.replayed()).isTrue();
         assertThat(retry.status()).isEqualTo(first.status());
         assertThat(retry.body()).isEqualTo(first.body());
         assertThat(retry.transferId()).isEqualTo(first.transferId());
 
-        assertThat(accountService.getAccount(alice.getId()).getBalanceCents()).isEqualTo(9_000);
-        assertThat(accountService.getAccount(bob.getId()).getBalanceCents()).isEqualTo(1_000);
-        assertThat(accountService.getEntries(bob.getId())).hasSize(1);
+        assertThat(balanceOf(alice.getId())).isEqualTo(9_000);
+        assertThat(balanceOf(bob.getId())).isEqualTo(1_000);
+        assertThat(entriesOf(bob.getId())).hasSize(1);
     }
 
     @Test
@@ -78,13 +78,12 @@ class IdempotentTransferServiceTest extends IntegrationTest {
         Account alice = openFundedAccount(10_000);
         Account bob = openFundedAccount(0);
         String key = newKey();
-        idempotentTransferService.transfer(key, new TransferRequest(alice.getId(), bob.getId(), 1_000L));
+        idempotentTransferService.transfer(ownerOf(alice), key, new TransferRequest(alice.getId(), bob.getId(), 1_000L));
 
-        assertThatThrownBy(() -> idempotentTransferService.transfer(
-                key, new TransferRequest(alice.getId(), bob.getId(), 2_000L)))
+        assertThatThrownBy(() -> idempotentTransferService.transfer(ownerOf(alice), key, new TransferRequest(alice.getId(), bob.getId(), 2_000L)))
                 .isInstanceOf(IdempotencyKeyReusedException.class);
 
-        assertThat(accountService.getAccount(alice.getId()).getBalanceCents()).isEqualTo(9_000);
+        assertThat(balanceOf(alice.getId())).isEqualTo(9_000);
     }
 
     @Test
@@ -94,16 +93,16 @@ class IdempotentTransferServiceTest extends IntegrationTest {
         String key = newKey();
         TransferRequest request = new TransferRequest(alice.getId(), bob.getId(), 1_000L);
 
-        assertThatThrownBy(() -> idempotentTransferService.transfer(key, request))
+        assertThatThrownBy(() -> idempotentTransferService.transfer(ownerOf(alice), key, request))
                 .isInstanceOf(InsufficientFundsException.class);
-        assertThat(keyRepository.findById(key)).isEmpty(); // rolled back together with the transfer
+        assertThat(keyRepository.findById(new IdempotencyKey.Id(alice.getOwnerId(), key))).isEmpty(); // rolled back together with the transfer
 
         // Money arrives, the client retries with the SAME key, and it now succeeds.
-        transferService.transfer(accountService.getSystemAccount().getId(), alice.getId(), 500L);
-        StoredResponse retry = idempotentTransferService.transfer(key, request);
+        transferService.transfer(ADMIN, accountService.getSystemAccount().getId(), alice.getId(), 500L);
+        StoredResponse retry = idempotentTransferService.transfer(ownerOf(alice), key, request);
 
         assertThat(retry.replayed()).isFalse();
-        assertThat(accountService.getAccount(bob.getId()).getBalanceCents()).isEqualTo(1_000);
+        assertThat(balanceOf(bob.getId())).isEqualTo(1_000);
     }
 
     @Test
@@ -114,11 +113,11 @@ class IdempotentTransferServiceTest extends IntegrationTest {
         String tooLong = "k".repeat(IdempotentTransferService.MAX_KEY_LENGTH + 1);
 
         for (String badKey : new String[] {null, "", "   ", tooLong}) {
-            assertThatThrownBy(() -> idempotentTransferService.transfer(badKey, request))
+            assertThatThrownBy(() -> idempotentTransferService.transfer(ownerOf(alice), badKey, request))
                     .isInstanceOf(InvalidRequestException.class)
                     .hasMessageContaining("Idempotency-Key");
         }
-        assertThat(accountService.getAccount(alice.getId()).getBalanceCents()).isEqualTo(1_000);
+        assertThat(balanceOf(alice.getId())).isEqualTo(1_000);
     }
 
     /**
@@ -141,7 +140,7 @@ class IdempotentTransferServiceTest extends IntegrationTest {
             for (int i = 0; i < threads; i++) {
                 futures.add(pool.submit(() -> {
                     startGate.await();
-                    return idempotentTransferService.transfer(key, request);
+                    return idempotentTransferService.transfer(ownerOf(alice), key, request);
                 }));
             }
             startGate.countDown();
@@ -153,19 +152,38 @@ class IdempotentTransferServiceTest extends IntegrationTest {
 
             assertThat(responses).filteredOn(r -> !r.replayed()).hasSize(1);
             assertThat(responses).extracting(StoredResponse::body).containsOnly(responses.getFirst().body());
-            assertThat(accountService.getEntries(bob.getId())).hasSize(1);
-            assertThat(accountService.getAccount(alice.getId()).getBalanceCents()).isEqualTo(99_000);
-            assertThat(accountService.getAccount(bob.getId()).getBalanceCents()).isEqualTo(1_000);
+            assertThat(entriesOf(bob.getId())).hasSize(1);
+            assertThat(balanceOf(alice.getId())).isEqualTo(99_000);
+            assertThat(balanceOf(bob.getId())).isEqualTo(1_000);
         } finally {
             pool.shutdownNow();
         }
+    }
+
+    /** Keys are scoped per user (Phase 4): two customers choosing the same key don't collide. */
+    @Test
+    void sameKeyFromDifferentUsersAreIndependentRequests() {
+        Account alice = openFundedAccount(1_000);
+        Account bob = openFundedAccount(1_000);
+        Account carol = openFundedAccount(0);
+        String sharedKey = newKey();
+
+        StoredResponse fromAlice = idempotentTransferService.transfer(
+                ownerOf(alice), sharedKey, new TransferRequest(alice.getId(), carol.getId(), 100L));
+        StoredResponse fromBob = idempotentTransferService.transfer(
+                ownerOf(bob), sharedKey, new TransferRequest(bob.getId(), carol.getId(), 200L));
+
+        assertThat(fromBob.replayed()).isFalse(); // not mistaken for Alice's request
+        assertThat(fromBob.transferId()).isNotEqualTo(fromAlice.transferId());
+        assertThat(balanceOf(carol.getId())).isEqualTo(300);
     }
 
     /** The guarantee rests on the database, not on Java: a duplicate key cannot be inserted. */
     @Test
     void databaseRejectsDuplicateKey() {
         String key = newKey();
-        String insert = "INSERT INTO idempotency_keys (idempotency_key, request_hash, created_at) VALUES (?, ?, now())";
+        String insert = "INSERT INTO idempotency_keys (client_id, idempotency_key, request_hash, created_at)"
+                + " VALUES ('someone', ?, ?, now())";
         jdbc.update(insert, key, "a".repeat(64));
 
         assertThatThrownBy(() -> jdbc.update(insert, key, "b".repeat(64)))

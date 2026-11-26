@@ -4,6 +4,7 @@ import com.lockstep.ledger.IntegrationTest;
 import com.lockstep.ledger.domain.Account;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.test.json.JsonCompareMode;
@@ -31,13 +32,14 @@ class IdempotencyApiTest extends IntegrationTest {
         Account bob = openFundedAccount(0);
 
         mockMvc.perform(post("/transfers")
+                        .header(HttpHeaders.AUTHORIZATION, bearerFor(alice))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(transferJson(alice.getId(), bob.getId(), 100)))
                 .andExpect(status().isBadRequest())
                 .andExpect(content().contentType(MediaType.APPLICATION_PROBLEM_JSON))
                 .andExpect(jsonPath("$.detail").value("Idempotency-Key header is required"));
 
-        mockMvc.perform(get("/accounts/{id}", bob.getId()))
+        mockMvc.perform(get("/accounts/{id}", bob.getId()).header(HttpHeaders.AUTHORIZATION, adminBearer()))
                 .andExpect(jsonPath("$.balanceCents").value(0));
     }
 
@@ -48,8 +50,8 @@ class IdempotencyApiTest extends IntegrationTest {
         String key = UUID.randomUUID().toString();
         String body = transferJson(alice.getId(), bob.getId(), 100);
 
-        MockHttpServletResponse first = send(key, body);
-        MockHttpServletResponse retry = send(key, body);
+        MockHttpServletResponse first = send(alice, key, body);
+        MockHttpServletResponse retry = send(alice, key, body);
 
         assertThat(first.getStatus()).isEqualTo(201);
         assertThat(first.getHeader("Idempotent-Replayed")).isNull();
@@ -59,7 +61,7 @@ class IdempotencyApiTest extends IntegrationTest {
         assertThat(retry.getContentAsString()).isEqualTo(first.getContentAsString());
         assertThat(retry.getHeader("Location")).isEqualTo(first.getHeader("Location"));
 
-        mockMvc.perform(get("/accounts/{id}", bob.getId()))
+        mockMvc.perform(get("/accounts/{id}", bob.getId()).header(HttpHeaders.AUTHORIZATION, adminBearer()))
                 .andExpect(jsonPath("$.balanceCents").value(100));
     }
 
@@ -69,9 +71,10 @@ class IdempotencyApiTest extends IntegrationTest {
         Account bob = openFundedAccount(0);
         String key = UUID.randomUUID().toString();
 
-        send(key, transferJson(alice.getId(), bob.getId(), 100));
+        send(alice, key, transferJson(alice.getId(), bob.getId(), 100));
 
         mockMvc.perform(post("/transfers")
+                        .header(HttpHeaders.AUTHORIZATION, bearerFor(alice))
                         .header("Idempotency-Key", key)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(transferJson(alice.getId(), bob.getId(), 999)))
@@ -79,7 +82,7 @@ class IdempotencyApiTest extends IntegrationTest {
                 .andExpect(content().contentType(MediaType.APPLICATION_PROBLEM_JSON))
                 .andExpect(jsonPath("$.type").value("https://lockstep.example/problems/idempotency-key-reused"));
 
-        mockMvc.perform(get("/accounts/{id}", bob.getId()))
+        mockMvc.perform(get("/accounts/{id}", bob.getId()).header(HttpHeaders.AUTHORIZATION, adminBearer()))
                 .andExpect(jsonPath("$.balanceCents").value(100));
     }
 
@@ -90,8 +93,8 @@ class IdempotencyApiTest extends IntegrationTest {
         Account bob = openFundedAccount(0);
         String key = UUID.randomUUID().toString();
 
-        send(key, transferJson(alice.getId(), bob.getId(), 100));
-        MockHttpServletResponse retry = send(key, """
+        send(alice, key, transferJson(alice.getId(), bob.getId(), 100));
+        MockHttpServletResponse retry = send(alice, key, """
                 {
                   "amountCents" : 100,
                   "toAccountId" : %d,
@@ -108,16 +111,17 @@ class IdempotencyApiTest extends IntegrationTest {
         Account alice = openFundedAccount(1_000);
         Account bob = openFundedAccount(0);
 
-        MockHttpServletResponse created = send(UUID.randomUUID().toString(),
+        MockHttpServletResponse created = send(alice, UUID.randomUUID().toString(),
                 transferJson(alice.getId(), bob.getId(), 100));
 
-        mockMvc.perform(get(created.getHeader("Location")))
+        mockMvc.perform(get(created.getHeader("Location")).header(HttpHeaders.AUTHORIZATION, bearerFor(alice)))
                 .andExpect(status().isOk())
                 .andExpect(content().json(created.getContentAsString(), JsonCompareMode.STRICT));
     }
 
-    private MockHttpServletResponse send(String key, String body) throws Exception {
+    private MockHttpServletResponse send(Account sender, String key, String body) throws Exception {
         return mockMvc.perform(post("/transfers")
+                        .header(HttpHeaders.AUTHORIZATION, bearerFor(sender))
                         .header("Idempotency-Key", key)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(body))

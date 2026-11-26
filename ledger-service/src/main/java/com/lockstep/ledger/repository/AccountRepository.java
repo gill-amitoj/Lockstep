@@ -8,6 +8,7 @@ import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.util.List;
 import java.util.Optional;
 
 public interface AccountRepository extends JpaRepository<Account, Long> {
@@ -35,4 +36,14 @@ public interface AccountRepository extends JpaRepository<Account, Long> {
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select a from Account a where a.id = :id")
     Optional<Account> findByIdForUpdate(@Param("id") Long id);
+
+    /**
+     * Only the owner column, as a plain String. Because no Account entity is
+     * loaded, this can't leave a stale cached copy that a later locking query
+     * would return.
+     */
+    @Query("select a.ownerId from Account a where a.id = :id")
+    Optional<String> findOwnerIdById(@Param("id") Long id);
+
+    List<Account> findByOwnerIdOrderByIdAsc(String ownerId);
 }
