@@ -1,5 +1,6 @@
 package com.settle.ledger.web;
 
+import com.jayway.jsonpath.JsonPath;
 import com.settle.ledger.IntegrationTest;
 import com.settle.ledger.domain.Account;
 import org.junit.jupiter.api.Test;
@@ -112,6 +113,43 @@ class TransferApiTest extends IntegrationTest {
                         .content("{not json"))
                 .andExpect(status().isBadRequest())
                 .andExpect(content().contentType(MediaType.APPLICATION_PROBLEM_JSON));
+    }
+
+    /** Regression: Jackson used to truncate 10.99 to 10 and silently move the wrong amount. */
+    @Test
+    void fractionalAmountIsRejectedNotTruncated() throws Exception {
+        Account alice = openFundedAccount(100);
+        Account bob = openFundedAccount(0);
+
+        mockMvc.perform(post("/transfers")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"fromAccountId": %d, "toAccountId": %d, "amountCents": 10.99}
+                                """.formatted(alice.getId(), bob.getId())))
+                .andExpect(status().isBadRequest())
+                .andExpect(content().contentType(MediaType.APPLICATION_PROBLEM_JSON));
+
+        mockMvc.perform(get("/accounts/{id}", bob.getId()))
+                .andExpect(jsonPath("$.balanceCents").value(0));
+    }
+
+    /** Regression: the POST response must match what the database stored (Postgres keeps microseconds). */
+    @Test
+    void createdAtInPostResponseMatchesStoredValue() throws Exception {
+        Account alice = openFundedAccount(100);
+        Account bob = openFundedAccount(0);
+
+        String created = mockMvc.perform(post("/transfers")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(transferJson(alice.getId(), bob.getId(), 10)))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        Number id = JsonPath.read(created, "$.id");
+        String createdAt = JsonPath.read(created, "$.createdAt");
+
+        mockMvc.perform(get("/transfers/{id}", id.longValue()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.createdAt").value(createdAt));
     }
 
     private static String transferJson(long from, long to, long amountCents) {

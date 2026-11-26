@@ -51,7 +51,7 @@ public class Account {
         this.type = type;
         this.currency = CURRENCY;
         this.balanceCents = 0;
-        this.createdAt = Instant.now();
+        this.createdAt = Timestamps.now();
     }
 
     /** Customer accounts need enough money; the SYSTEM funding account may go negative. */

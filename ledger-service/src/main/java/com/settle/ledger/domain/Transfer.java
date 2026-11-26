@@ -41,7 +41,7 @@ public class Transfer {
         this.toAccountId = toAccountId;
         this.amountCents = amountCents;
         this.currency = Account.CURRENCY;
-        this.createdAt = Instant.now();
+        this.createdAt = Timestamps.now();
     }
 
     public Long getId() {

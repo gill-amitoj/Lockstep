@@ -36,7 +36,7 @@ public class Entry {
         this.transferId = transferId;
         this.accountId = accountId;
         this.amountCents = amountCents;
-        this.createdAt = Instant.now();
+        this.createdAt = Timestamps.now();
     }
 
     public static Entry debit(Long transferId, Long accountId, long amountCents) {
