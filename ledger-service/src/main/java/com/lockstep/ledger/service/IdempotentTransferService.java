@@ -3,6 +3,7 @@ package com.lockstep.ledger.service;
 import com.lockstep.ledger.domain.IdempotencyKey;
 import com.lockstep.ledger.domain.Transfer;
 import com.lockstep.ledger.repository.IdempotencyKeyRepository;
+import com.lockstep.ledger.security.Caller;
 import com.lockstep.ledger.web.dto.TransferRequest;
 import com.lockstep.ledger.web.dto.TransferResponse;
 import org.springframework.http.HttpStatus;
@@ -50,34 +51,34 @@ public class IdempotentTransferService {
     }
 
     @Transactional
-    public StoredResponse transfer(String idempotencyKey, TransferRequest request) {
+    public StoredResponse transfer(Caller caller, String idempotencyKey, TransferRequest request) {
         validateKey(idempotencyKey);
         String requestHash = hash(request);
 
         // 1. Claim the key. If another request with this key is in flight, this
         //    line blocks until that request's transaction ends.
-        boolean claimed = keys.tryClaim(idempotencyKey, requestHash) == 1;
+        boolean claimed = keys.tryClaim(caller.username(), idempotencyKey, requestHash) == 1;
 
         if (!claimed) {
             // 2a. Someone already completed a request with this key.
-            return replay(idempotencyKey, requestHash);
+            return replay(caller, idempotencyKey, requestHash);
         }
 
         // 2b. We own the key: do the real work. TransferService.transfer is also
         //     @Transactional; by default it JOINS this transaction rather than
         //     starting its own, so everything commits together.
-        Transfer transfer = transferService.transfer(
+        Transfer transfer = transferService.transfer(caller,
                 request.fromAccountId(), request.toAccountId(), request.amountCents());
 
         String body = jsonMapper.writeValueAsString(TransferResponse.from(transfer));
         int status = HttpStatus.CREATED.value();
-        keys.saveResponse(idempotencyKey, status, body, transfer.getId());
+        keys.saveResponse(caller.username(), idempotencyKey, status, body, transfer.getId());
 
         return new StoredResponse(status, body, transfer.getId(), false);
     }
 
-    private StoredResponse replay(String idempotencyKey, String requestHash) {
-        IdempotencyKey existing = keys.findById(idempotencyKey)
+    private StoredResponse replay(Caller caller, String idempotencyKey, String requestHash) {
+        IdempotencyKey existing = keys.findById(new IdempotencyKey.Id(caller.username(), idempotencyKey))
                 .orElseThrow(() -> new IllegalStateException("Claimed key vanished: " + idempotencyKey));
 
         if (!existing.getRequestHash().equals(requestHash)) {
