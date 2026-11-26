@@ -110,6 +110,6 @@ class SchemaConstraintsTest extends IntegrationTest {
     private Transfer newTransfer() {
         Account alice = openFundedAccount(1_000);
         Account bob = openFundedAccount(0);
-        return transferService.transfer(alice.getId(), bob.getId(), 100L);
+        return transferService.transfer(ownerOf(alice), alice.getId(), bob.getId(), 100L);
     }
 }

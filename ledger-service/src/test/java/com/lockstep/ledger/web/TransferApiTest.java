@@ -3,14 +3,17 @@ package com.lockstep.ledger.web;
 import com.jayway.jsonpath.JsonPath;
 import com.lockstep.ledger.IntegrationTest;
 import com.lockstep.ledger.domain.Account;
+import com.lockstep.ledger.security.Role;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 
 import java.util.UUID;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
@@ -20,7 +23,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 /**
  * The HTTP contract: status codes, JSON shape, problem+json errors.
- * MockMvc calls the real controllers without opening a network port.
+ * MockMvc calls the real controllers, through the real security filters, without
+ * opening a network port. Every request carries a real signed JWT.
  */
 class TransferApiTest extends IntegrationTest {
 
@@ -28,10 +32,8 @@ class TransferApiTest extends IntegrationTest {
     private MockMvc mockMvc;
 
     @Test
-    void openAccountReturns201WithZeroBalance() throws Exception {
-        mockMvc.perform(post("/accounts")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"ownerId\": \"alice\"}"))
+    void openAccountReturns201OwnedByCaller() throws Exception {
+        mockMvc.perform(post("/accounts").header(HttpHeaders.AUTHORIZATION, bearer("alice", Role.CUSTOMER)))
                 .andExpect(status().isCreated())
                 .andExpect(header().exists("Location"))
                 .andExpect(jsonPath("$.ownerId").value("alice"))
@@ -41,12 +43,22 @@ class TransferApiTest extends IntegrationTest {
     }
 
     @Test
+    void listAccountsReturnsOnlyCallersAccounts() throws Exception {
+        Account alice = openFundedAccount(0);
+        openFundedAccount(0); // someone else's
+
+        mockMvc.perform(get("/accounts").header(HttpHeaders.AUTHORIZATION, bearerFor(alice)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(1))
+                .andExpect(jsonPath("$[0].id").value(alice.getId()));
+    }
+
+    @Test
     void createTransferReturns201AndUpdatesBalances() throws Exception {
         Account alice = openFundedAccount(10_000);
         Account bob = openFundedAccount(0);
 
-        mockMvc.perform(postTransfer()
-                        .contentType(MediaType.APPLICATION_JSON)
+        mockMvc.perform(postTransfer(alice)
                         .content(transferJson(alice.getId(), bob.getId(), 2_500)))
                 .andExpect(status().isCreated())
                 .andExpect(header().exists("Location"))
@@ -55,11 +67,11 @@ class TransferApiTest extends IntegrationTest {
                 .andExpect(jsonPath("$.amountCents").value(2_500))
                 .andExpect(jsonPath("$.currency").value("CAD"));
 
-        mockMvc.perform(get("/accounts/{id}", bob.getId()))
+        mockMvc.perform(get("/accounts/{id}", bob.getId()).header(HttpHeaders.AUTHORIZATION, bearerFor(bob)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.balanceCents").value(2_500));
 
-        mockMvc.perform(get("/accounts/{id}/entries", bob.getId()))
+        mockMvc.perform(get("/accounts/{id}/entries", bob.getId()).header(HttpHeaders.AUTHORIZATION, bearerFor(bob)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.length()").value(1))
                 .andExpect(jsonPath("$[0].amountCents").value(2_500));
@@ -70,21 +82,20 @@ class TransferApiTest extends IntegrationTest {
         Account alice = openFundedAccount(100);
         Account bob = openFundedAccount(0);
 
-        mockMvc.perform(postTransfer()
-                        .contentType(MediaType.APPLICATION_JSON)
+        mockMvc.perform(postTransfer(alice)
                         .content(transferJson(alice.getId(), bob.getId(), 101)))
                 .andExpect(status().isUnprocessableContent())
                 .andExpect(content().contentType(MediaType.APPLICATION_PROBLEM_JSON))
                 .andExpect(jsonPath("$.type").value("https://lockstep.example/problems/insufficient-funds"))
-                .andExpect(jsonPath("$.status").value(422));
+                .andExpect(jsonPath("$.status").value(422))
+                .andExpect(jsonPath("$.correlationId").isNotEmpty());
     }
 
     @Test
     void sameAccountReturns400ProblemJson() throws Exception {
         Account alice = openFundedAccount(100);
 
-        mockMvc.perform(postTransfer()
-                        .contentType(MediaType.APPLICATION_JSON)
+        mockMvc.perform(postTransfer(alice)
                         .content(transferJson(alice.getId(), alice.getId(), 10)))
                 .andExpect(status().isBadRequest())
                 .andExpect(content().contentType(MediaType.APPLICATION_PROBLEM_JSON))
@@ -96,26 +107,27 @@ class TransferApiTest extends IntegrationTest {
         Account alice = openFundedAccount(100);
         Account bob = openFundedAccount(0);
 
-        mockMvc.perform(postTransfer()
-                        .contentType(MediaType.APPLICATION_JSON)
+        mockMvc.perform(postTransfer(alice)
                         .content(transferJson(alice.getId(), bob.getId(), 0)))
                 .andExpect(status().isBadRequest());
     }
 
     @Test
     void unknownAccountReturns404ProblemJson() throws Exception {
-        mockMvc.perform(get("/accounts/{id}", Long.MAX_VALUE))
+        mockMvc.perform(get("/accounts/{id}", Long.MAX_VALUE).header(HttpHeaders.AUTHORIZATION, adminBearer()))
                 .andExpect(status().isNotFound())
                 .andExpect(content().contentType(MediaType.APPLICATION_PROBLEM_JSON));
     }
 
     @Test
-    void malformedJsonReturns400ProblemJson() throws Exception {
-        mockMvc.perform(postTransfer()
-                        .contentType(MediaType.APPLICATION_JSON)
+    void malformedJsonReturns400ProblemJsonWithCorrelationId() throws Exception {
+        Account alice = openFundedAccount(0);
+
+        mockMvc.perform(postTransfer(alice)
                         .content("{not json"))
                 .andExpect(status().isBadRequest())
-                .andExpect(content().contentType(MediaType.APPLICATION_PROBLEM_JSON));
+                .andExpect(content().contentType(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.correlationId").isNotEmpty());
     }
 
     /** Regression: Jackson used to truncate 10.99 to 10 and silently move the wrong amount. */
@@ -124,16 +136,14 @@ class TransferApiTest extends IntegrationTest {
         Account alice = openFundedAccount(100);
         Account bob = openFundedAccount(0);
 
-        mockMvc.perform(postTransfer()
-                        .contentType(MediaType.APPLICATION_JSON)
+        mockMvc.perform(postTransfer(alice)
                         .content("""
                                 {"fromAccountId": %d, "toAccountId": %d, "amountCents": 10.99}
                                 """.formatted(alice.getId(), bob.getId())))
                 .andExpect(status().isBadRequest())
                 .andExpect(content().contentType(MediaType.APPLICATION_PROBLEM_JSON));
 
-        mockMvc.perform(get("/accounts/{id}", bob.getId()))
-                .andExpect(jsonPath("$.balanceCents").value(0));
+        assertThat(balanceOf(bob.getId())).isZero();
     }
 
     /** Regression: the POST response must match what the database stored (Postgres keeps microseconds). */
@@ -142,22 +152,24 @@ class TransferApiTest extends IntegrationTest {
         Account alice = openFundedAccount(100);
         Account bob = openFundedAccount(0);
 
-        String created = mockMvc.perform(postTransfer()
-                        .contentType(MediaType.APPLICATION_JSON)
+        String created = mockMvc.perform(postTransfer(alice)
                         .content(transferJson(alice.getId(), bob.getId(), 10)))
                 .andExpect(status().isCreated())
                 .andReturn().getResponse().getContentAsString();
         Number id = JsonPath.read(created, "$.id");
         String createdAt = JsonPath.read(created, "$.createdAt");
 
-        mockMvc.perform(get("/transfers/{id}", id.longValue()))
+        mockMvc.perform(get("/transfers/{id}", id.longValue()).header(HttpHeaders.AUTHORIZATION, bearerFor(alice)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.createdAt").value(createdAt));
     }
 
-    /** POST /transfers with a fresh Idempotency-Key, so each call is a new request. */
-    private static MockHttpServletRequestBuilder postTransfer() {
-        return post("/transfers").header("Idempotency-Key", UUID.randomUUID().toString());
+    /** POST /transfers as the account's owner, with a fresh Idempotency-Key so each call is a new request. */
+    private MockHttpServletRequestBuilder postTransfer(Account sender) {
+        return post("/transfers")
+                .header(HttpHeaders.AUTHORIZATION, bearerFor(sender))
+                .header("Idempotency-Key", UUID.randomUUID().toString())
+                .contentType(MediaType.APPLICATION_JSON);
     }
 
     private static String transferJson(long from, long to, long amountCents) {

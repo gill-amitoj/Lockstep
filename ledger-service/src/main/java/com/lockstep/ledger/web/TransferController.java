@@ -1,5 +1,6 @@
 package com.lockstep.ledger.web;
 
+import com.lockstep.ledger.security.Caller;
 import com.lockstep.ledger.service.IdempotentTransferService;
 import com.lockstep.ledger.service.StoredResponse;
 import com.lockstep.ledger.service.TransferService;
@@ -7,6 +8,8 @@ import com.lockstep.ledger.web.dto.TransferRequest;
 import com.lockstep.ledger.web.dto.TransferResponse;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -43,9 +46,10 @@ public class TransferController {
      */
     @PostMapping
     public ResponseEntity<String> createTransfer(
+            @AuthenticationPrincipal Jwt jwt,
             @RequestHeader(name = IDEMPOTENCY_KEY_HEADER, required = false) String idempotencyKey,
             @RequestBody TransferRequest request) {
-        StoredResponse response = idempotentTransferService.transfer(idempotencyKey, request);
+        StoredResponse response = idempotentTransferService.transfer(Caller.from(jwt), idempotencyKey, request);
 
         ResponseEntity.BodyBuilder builder = ResponseEntity
                 .status(response.status())
@@ -58,7 +62,7 @@ public class TransferController {
     }
 
     @GetMapping("/{id}")
-    public TransferResponse getTransfer(@PathVariable Long id) {
-        return TransferResponse.from(transferService.getTransfer(id));
+    public TransferResponse getTransfer(@AuthenticationPrincipal Jwt jwt, @PathVariable Long id) {
+        return TransferResponse.from(transferService.getTransfer(Caller.from(jwt), id));
     }
 }
