@@ -1,10 +1,12 @@
 # Local infrastructure. Values come from the .env file next to this one
 # (copy .env.example to .env). Nothing secret is committed.
+name: lockstep
+
 services:
   postgres:
     image: postgres:17-alpine
     environment:
-      POSTGRES_DB: settle_ledger
+      POSTGRES_DB: lockstep_ledger
       POSTGRES_USER: ${DB_USERNAME:?set DB_USERNAME in .env}
       POSTGRES_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in .env}
     ports:
