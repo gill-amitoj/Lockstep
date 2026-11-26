@@ -6,6 +6,13 @@ import com.lockstep.ledger.service.StoredResponse;
 import com.lockstep.ledger.service.TransferService;
 import com.lockstep.ledger.web.dto.TransferRequest;
 import com.lockstep.ledger.web.dto.TransferResponse;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.enums.ParameterIn;
+import io.swagger.v3.oas.annotations.media.Content;
+import io.swagger.v3.oas.annotations.media.Schema;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -20,6 +27,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.net.URI;
 
+@Tag(name = "Transfers")
 @RestController
 @RequestMapping("/transfers")
 public class TransferController {
@@ -45,8 +53,18 @@ public class TransferController {
      * every replay are byte-for-byte identical.
      */
     @PostMapping
+    @Operation(summary = "Move money between two accounts",
+            description = "Customers may only send from accounts they own. Retrying with the same "
+                    + "Idempotency-Key and body returns the original response instead of moving money again.")
+    @ApiResponse(responseCode = "201", description = "Transfer created (or replayed: see Idempotent-Replayed)",
+            content = @Content(mediaType = "application/json", schema = @Schema(implementation = TransferResponse.class)))
+    @ApiResponse(responseCode = "400", description = "Invalid request or missing Idempotency-Key", content = @Content(mediaType = "application/problem+json"))
+    @ApiResponse(responseCode = "404", description = "Account not found (or not yours)", content = @Content(mediaType = "application/problem+json"))
+    @ApiResponse(responseCode = "422", description = "Insufficient funds, or Idempotency-Key reused with a different body", content = @Content(mediaType = "application/problem+json"))
     public ResponseEntity<String> createTransfer(
             @AuthenticationPrincipal Jwt jwt,
+            @Parameter(in = ParameterIn.HEADER, required = true,
+                    description = "Unique per logical request (e.g. a UUID). Max 255 characters.")
             @RequestHeader(name = IDEMPOTENCY_KEY_HEADER, required = false) String idempotencyKey,
             @RequestBody TransferRequest request) {
         StoredResponse response = idempotentTransferService.transfer(Caller.from(jwt), idempotencyKey, request);

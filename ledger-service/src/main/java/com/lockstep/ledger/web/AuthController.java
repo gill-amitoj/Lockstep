@@ -6,6 +6,8 @@ import com.lockstep.ledger.service.AuthService;
 import com.lockstep.ledger.web.dto.CredentialsRequest;
 import com.lockstep.ledger.web.dto.TokenResponse;
 import com.lockstep.ledger.web.dto.UserResponse;
+import io.swagger.v3.oas.annotations.security.SecurityRequirements;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -18,6 +20,8 @@ import org.springframework.web.bind.annotation.RestController;
  * Trade-off: there is no rate limiting or lockout on /auth/token yet, so
  * passwords could be brute-forced. A real deployment would add both, plus MFA.
  */
+@Tag(name = "Authentication", description = "The only endpoints that need no token")
+@SecurityRequirements // empty: overrides the global bearer requirement from OpenApiConfig
 @RestController
 @RequestMapping("/auth")
 public class AuthController {

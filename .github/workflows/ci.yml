@@ -1,0 +1,80 @@
+# Builds both services and runs every test: unit, integration (Testcontainers:
+# real PostgreSQL and Kafka) and end-to-end (both services as Docker containers).
+# GitHub's Ubuntu runners include Docker, which is all Testcontainers needs.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Read-only token: this workflow never writes to the repository.
+permissions:
+  contents: read
+
+# A newer push to the same branch cancels the older, now-pointless run.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build and test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v7
+
+      # The project targets Java 21 (see options.release in the build files);
+      # CI runs on a real JDK 21, so anything newer would fail here.
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      # Caches Gradle dependencies between runs and verifies gradle-wrapper.jar
+      # is an official Gradle release (protects against a tampered wrapper).
+      - uses: gradle/actions/setup-gradle@v6
+
+      # Pull the container images up front so pull time isn't counted against test timeouts.
+      - name: Pre-pull test images
+        run: |
+          docker pull -q postgres:17-alpine
+          docker pull -q apache/kafka:4.1.1
+          docker pull -q eclipse-temurin:21-jre-alpine
+
+      # "build" = compile + all tests in all modules + assemble the jars.
+      - name: Build and run all tests
+        run: ./gradlew build --no-daemon
+
+      # A countable, linkable record of what ran (useful when quoting numbers).
+      - name: Test summary
+        if: always()
+        run: |
+          {
+            echo "## Test results"
+            echo ""
+            echo "| Module | Tests | Failures | Errors | Skipped |"
+            echo "|---|---|---|---|---|"
+            for module in ledger-service fraud-service e2e-tests; do
+              dir="$module/build/test-results/test"
+              if ls "$dir"/*.xml >/dev/null 2>&1; then
+                sum() { grep -ho "<testsuite [^>]*" "$dir"/*.xml | grep -o " $1=\"[0-9]*\"" | grep -o '[0-9]*' | paste -sd+ - | bc; }
+                echo "| $module | $(sum tests) | $(sum failures) | $(sum errors) | $(sum skipped) |"
+              else
+                echo "| $module | not run | | | |"
+              fi
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # On failure, keep the full HTML reports (with logs) for download.
+      - name: Upload test reports
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-reports
+          path: |
+            */build/reports/tests/test/
+            */build/test-results/test/
+          retention-days: 7

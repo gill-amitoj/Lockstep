@@ -8,6 +8,7 @@ import com.lockstep.ledger.service.ConflictException;
 import com.lockstep.ledger.service.InvalidRequestException;
 import com.lockstep.ledger.service.NotFoundException;
 import com.lockstep.ledger.web.dto.AuditEventResponse;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.oauth2.jwt.Jwt;
@@ -22,6 +23,7 @@ import java.net.URI;
 import java.util.List;
 
 /** ADMIN only. SecurityConfig rejects every other role for /admin/** before these methods run. */
+@Tag(name = "Admin", description = "ADMIN role only")
 @RestController
 @RequestMapping("/admin")
 public class AdminController {

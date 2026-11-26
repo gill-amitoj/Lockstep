@@ -5,6 +5,7 @@ import com.lockstep.ledger.security.Caller;
 import com.lockstep.ledger.service.AccountService;
 import com.lockstep.ledger.web.dto.AccountResponse;
 import com.lockstep.ledger.web.dto.EntryResponse;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.oauth2.jwt.Jwt;
@@ -21,6 +22,7 @@ import java.util.List;
  * HTTP only: parse the request, call the service, map the result to JSON. No business logic here.
  * {@code @AuthenticationPrincipal Jwt} is the already-verified token for this request.
  */
+@Tag(name = "Accounts")
 @RestController
 @RequestMapping("/accounts")
 public class AccountController {
