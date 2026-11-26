@@ -1,0 +1,41 @@
+// End-to-end tests: both services run as real Docker containers (built from
+// their Dockerfiles) next to real PostgreSQL and Kafka containers, and are
+// driven only through their HTTP APIs, as a client would.
+plugins {
+    id 'java'
+    id 'io.spring.dependency-management'
+}
+
+repositories {
+    mavenCentral()
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.release = 21
+}
+
+// Use Spring Boot's managed versions (JUnit, AssertJ, Testcontainers, ...)
+// without making this module a Spring Boot application.
+dependencyManagement {
+    imports {
+        mavenBom org.springframework.boot.gradle.plugin.SpringBootPlugin.BOM_COORDINATES
+    }
+}
+
+dependencies {
+    testImplementation 'org.springframework.boot:spring-boot-starter-test'      // JUnit 5, AssertJ, JsonPath
+    testImplementation 'org.testcontainers:testcontainers-junit-jupiter'
+    testImplementation 'org.testcontainers:testcontainers-postgresql'
+    testImplementation 'org.testcontainers:testcontainers-kafka'
+    testRuntimeOnly 'org.postgresql:postgresql'                                 // to inspect the outbox directly
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+tasks.named('test') {
+    useJUnitPlatform()
+    // The Docker images are built from the services' jars, so build those first.
+    dependsOn ':ledger-service:bootJar', ':fraud-service:bootJar'
+    systemProperty 'lockstep.root', rootDir.absolutePath
+    // Show progress: these tests take a minute or two.
+    testLogging { events 'passed', 'failed', 'skipped' }
+}
